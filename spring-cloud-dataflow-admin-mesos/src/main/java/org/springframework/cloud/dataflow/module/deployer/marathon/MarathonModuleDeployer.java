@@ -17,9 +17,19 @@
 package org.springframework.cloud.dataflow.module.deployer.marathon;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
+import mesosphere.marathon.client.Marathon;
+import mesosphere.marathon.client.MarathonClient;
+import mesosphere.marathon.client.model.v2.App;
+import mesosphere.marathon.client.model.v2.Container;
+import mesosphere.marathon.client.model.v2.Docker;
+import mesosphere.marathon.client.model.v2.HealthCheck;
+import mesosphere.marathon.client.model.v2.Port;
+import mesosphere.marathon.client.model.v2.Task;
+import mesosphere.marathon.client.utils.MarathonException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,15 +39,6 @@ import org.springframework.cloud.dataflow.core.ModuleDeploymentRequest;
 import org.springframework.cloud.dataflow.module.ModuleStatus;
 import org.springframework.cloud.dataflow.module.deployer.ModuleArgumentQualifier;
 import org.springframework.cloud.dataflow.module.deployer.ModuleDeployer;
-
-import mesosphere.marathon.client.Marathon;
-import mesosphere.marathon.client.MarathonClient;
-import mesosphere.marathon.client.model.v2.App;
-import mesosphere.marathon.client.model.v2.Container;
-import mesosphere.marathon.client.model.v2.Docker;
-import mesosphere.marathon.client.model.v2.Port;
-import mesosphere.marathon.client.model.v2.Task;
-import mesosphere.marathon.client.utils.MarathonException;
 
 /**
  * A ModuleDeployer implementation for deploying modules as applications on Marathon, using the
@@ -110,6 +111,10 @@ public class MarathonModuleDeployer implements ModuleDeployer {
 		app.setCpus(cpus);
 		app.setMem(memory);
 		app.setInstances(request.getCount());
+		HealthCheck healthCheck = new HealthCheck();
+		healthCheck.setPath("/health");
+		healthCheck.setGracePeriodSeconds(60 * 10);
+		app.setHealthChecks(Arrays.asList(healthCheck));
 
 		log.info("Creating app with definition: " + app.toString());
 
@@ -145,23 +150,32 @@ public class MarathonModuleDeployer implements ModuleDeployer {
 			return buildStatus(id, app);
 		}
 		catch (MarathonException e) {
-			throw new RuntimeException(e);
+			if (e.getStatus() == 404) { // will report unknown
+				return ModuleStatus.of(id).build();
+			} else {
+				throw new RuntimeException(e);
+			}
 		}
 	}
 
 	@Override
 	public Map<ModuleDeploymentId, ModuleStatus> status() {
 		Map<ModuleDeploymentId, ModuleStatus> result = new HashMap<>();
-		for (App app : marathon.getApps().getApps()) {
-			String moduleMarker = app.getEnv().get("SPRING_CLOUD_DATAFLOW_MODULE");
-			if (moduleMarker != null) {
-				int colon = moduleMarker.indexOf(':');
-				String group = moduleMarker.substring(0, colon);
-				String label = moduleMarker.substring(colon + 1);
-				ModuleDeploymentId id = new ModuleDeploymentId(group, label);
-				ModuleStatus status = buildStatus(id, app);
-				result.put(id, status);
+		try {
+			for (App app : marathon.getApps().getApps()) {
+				String moduleMarker = app.getEnv().get("SPRING_CLOUD_DATAFLOW_MODULE");
+				if (moduleMarker != null) {
+					int colon = moduleMarker.indexOf(':');
+					String group = moduleMarker.substring(0, colon);
+					String label = moduleMarker.substring(colon + 1);
+					ModuleDeploymentId id = new ModuleDeploymentId(group, label);
+					ModuleStatus status = buildStatus(id, app);
+					result.put(id, status);
+				}
 			}
+		}
+		catch (MarathonException e) {
+			return Collections.emptyMap(); // Can't even know app names
 		}
 		return result;
 	}

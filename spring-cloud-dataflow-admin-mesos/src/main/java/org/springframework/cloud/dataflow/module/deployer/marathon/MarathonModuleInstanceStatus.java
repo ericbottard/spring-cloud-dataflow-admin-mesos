@@ -16,11 +16,13 @@
 
 package org.springframework.cloud.dataflow.module.deployer.marathon;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
 import mesosphere.marathon.client.model.v2.App;
+import mesosphere.marathon.client.model.v2.HealthCheckResult;
 import mesosphere.marathon.client.model.v2.Task;
 
 import org.springframework.cloud.dataflow.module.DeploymentState;
@@ -65,7 +67,13 @@ public class MarathonModuleInstanceStatus implements ModuleInstanceStatus {
 
 	@Override
 	public DeploymentState getState() {
-		return task != null ? DeploymentState.deployed : DeploymentState.failed;
+		if (task == null) {
+			return DeploymentState.failed;
+		} else {
+			Collection<HealthCheckResult> healthCheckResults = task.getHealthCheckResults();
+			boolean alive = healthCheckResults != null && healthCheckResults.iterator().next().isAlive();
+			return alive ? DeploymentState.deployed : DeploymentState.deploying;
+		}
 	}
 
 	@Override
